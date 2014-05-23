@@ -3,10 +3,11 @@
 from django.views.static import serve as static_serve
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponseRedirect, HttpResponse, \
-    HttpResponseServerError, Http404
+    HttpResponseServerError
 from django.core.urlresolvers import reverse
 from django.shortcuts import redirect
 from django.views.decorators.csrf import requires_csrf_token
+import settings
 
 import zerorpc
 
@@ -18,16 +19,16 @@ def home(request):
     return HttpResponseRedirect(reverse('dashboard', kwargs={'path': ''}))
 
 
+# No need for login_required behaviour if auth is switched off.
+if 'django.contrib.auth' not in settings.INSTALLED_APPS:
+    login_required = lambda x: x
+
+
+@login_required
 def serve_dir_or_index(request, path, document_root):
     if len(path) == 0:
         path = 'index.html'
-
-    try:
-        return static_serve(request, path, document_root)
-    except Http404:
-        return HttpResponse(
-            "User interface file not found, check that the Calamari user interface is properly installed.",
-            status=404)
+    return static_serve(request, path, document_root)
 
 
 @login_required
@@ -77,15 +78,13 @@ import errno
 
 
 CENTOS = 'centos'
-REDHAT6 = 'redhat6'
-REDHAT7 = 'redhat7'
-PRECISE = 'precise'
-TRUSTY = 'trusty'
-WHEEZY = 'wheezy'
-DISTROS = [CENTOS, REDHAT6, REDHAT7, PRECISE, TRUSTY, WHEEZY]
+REDHAT = 'redhat'
+UBUNTU = 'ubuntu'
+DEBIAN = 'debian'
+DISTROS = [CENTOS, REDHAT, UBUNTU, DEBIAN]
 
 SUPPORT_MATRIX = "Inktank Ceph Enterprise supports RHEL 6.3, RHEL 6.4, CentOS 6.3, CentOS 6.4, " \
-                 "Ubuntu 12.04/14.04 LTS, and Debian 7."
+                 "Ubuntu 12.04 LTS, and Debian 7."
 
 SALT_PACKAGE = "salt-minion"
 SALT_CONFIG_PATH = "/etc/salt/"
@@ -126,39 +125,33 @@ else:
 if lsb_release.startswith("CentOS release 6."):
     distro = CENTOS
 elif lsb_release.startswith("Red Hat Enterprise Linux Server release 6."):
-    distro = REDHAT6
-elif lsb_release.startswith("Red Hat Enterprise Linux Server release 7."):
-    distro = REDHAT7
+    distro = REDHAT
 elif lsb_release.startswith("Ubuntu 12.04"):
-    distro = PRECISE
-elif lsb_release.startswith("Ubuntu 14.04"):
-    distro = TRUSTY
+    distro = UBUNTU
 elif lsb_release.startswith("Debian GNU/Linux 7."):
-    distro = WHEEZY
+    distro = DEBIAN
 else:
     print "Unsupported distribution '%s'" % lsb_release
     print SUPPORT_MATRIX
     sys.exit(-1)
 
 # Configure package repository
-if distro in [CENTOS, REDHAT6, REDHAT7]:
-    tag = {{CENTOS: 'el6', REDHAT6: 'rhel6', REDHAT7: 'rhel7'}}.get(distro)
+if distro in [CENTOS, REDHAT]:
     open("/etc/yum.repos.d/calamari.repo", 'w').write(
-    "[{{tag}}-calamari]\\n" \
+    "[el6-calamari]\\n" \
 "name=Calamari\\n" \
-"baseurl={base_url}static/{{tag}}\\n" \
+"baseurl={base_url}static/el6\\n" \
 "gpgcheck=0\\n" \
-"enabled=1\\n".format(tag=tag))
-elif distro in [PRECISE, TRUSTY]:
-    tag = {{PRECISE: 'precise', TRUSTY: 'trusty'}}.get(distro)
+"enabled=1\\n")
+elif distro == UBUNTU:
     # Would be nice to use apt-add-repository, but it's not always there and
     # trying to apt-get install it from the net would be a catch-22
-    open("/etc/apt/sources.list.d/calamari.list", 'w').write("deb [arch=amd64] {base_url}static/{{tag}} {{tag}} main".format(tag=tag))
-elif distro == WHEEZY:
-    open("/etc/apt/sources.list.d/calamari.list", 'w').write("deb [arch=amd64] {base_url}static/debian wheezy  main")
+    open("/etc/apt/sources.list.d/calamari.list", 'w').write("deb {base_url}static/ubuntu precise main")
+elif distro == DEBIAN:
+    open("/etc/apt/sources.list.d/calamari.list", 'w').write("deb {base_url}static/debian wheezy main")
 else:
     # Should never happen
-    raise NotImplementedError()
+    raise NotImplmentedError()
 
 # Emplace minion config prior to installation so that it is present
 # when the minion first starts.
@@ -173,7 +166,7 @@ except OSError, e:
 open(os.path.join(SALT_CONFIG_PATH, "minion.d/calamari.conf"), 'w').write("master: %s\\n" % MASTER)
 
 # Deploy salt minion
-if distro in [CENTOS, REDHAT6, REDHAT7]:
+if distro in [CENTOS, REDHAT]:
     subprocess.call(["yum", "check-update"])
     subprocess.check_call(["yum", "install", "-y", SALT_PACKAGE])
     subprocess.check_call(["chkconfig", "salt-minion", "on"])
