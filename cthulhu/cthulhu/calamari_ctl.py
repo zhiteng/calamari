@@ -5,7 +5,6 @@ import json
 import logging
 import tempfile
 import traceback
-from alembic import command
 import os
 import sys
 from StringIO import StringIO
@@ -13,11 +12,16 @@ import subprocess
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.management import execute_from_command_line
 import pwd
+import time
+
+from django.core.management import execute_from_command_line
 from django.utils.crypto import get_random_string
 import time
 from calamari_common.config import CalamariConfig, AlembicConfig
 from sqlalchemy import create_engine
+
 from calamari_common.db.base import Base
+from calamari_common.config import CalamariConfig, AlembicConfig
 
 # Import sqlalchemy objects so that create_all sees them
 from cthulhu.persistence.sync_objects import SyncObject  # noqa
@@ -215,6 +219,10 @@ def initialize(args):
         chars = 'abcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*(-_=+)'
         open(config.get('calamari_web', 'secret_key_path'), 'w').write(get_random_string(50, chars))
 
+def _initialize_db(args, config):
+    from alembic import command
+    from sqlalchemy import create_engine
+
     run_local_salt(sls=RELAX_SALT_PERMS_SLS, message='salt')
     run_local_salt(sls=POSTGRES_SLS, message='postgres')
 
@@ -242,6 +250,31 @@ def initialize(args):
     create_default_roles()
     create_admin_users(args)
     log.info("Initializing web interface...")
+
+
+def initialize(args):
+    """
+    This command exists to:
+
+    - Prevent the user having to type more than one thing
+    - Prevent the user seeing internals like 'manage.py' which we would
+      rather people were not messing with on production systems.
+    """
+    log.info("Loading configuration..")
+    config = CalamariConfig()
+
+    # Generate django's SECRET_KEY setting
+    # Do this first, otherwise subsequent django ops will raise ImproperlyConfigured.
+    # Write into a file instead of directly, so that package upgrades etc won't spuriously
+    # prompt for modified config unless it really is modified.
+    if not os.path.exists(config.get('calamari_web', 'secret_key_path')):
+        chars = 'abcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*(-_=+)'
+        open(config.get('calamari_web', 'secret_key_path'), 'w').write(get_random_string(50, chars))
+
+    try:
+        _initialize_db(args, config)
+    except ImportError:
+        log.warning("Skipping database configuration")
 
     # Django's static files
     with quiet():
@@ -302,6 +335,8 @@ def rename_user(args):
 
 
 def clear(args):
+    from sqlalchemy import create_engine
+
     if not args.yes_i_am_sure:
         log.warn("This will remove all stored Calamari monitoring status and history.  Use '--yes-i-am-sure' to proceed")
         return
