@@ -17,11 +17,10 @@ import time
 from django.core.management import execute_from_command_line
 from django.utils.crypto import get_random_string
 import time
-from calamari_common.config import CalamariConfig, AlembicConfig
-from sqlalchemy import create_engine
+from calamari_common.config import CalamariConfig
 
 from calamari_common.db.base import Base
-from calamari_common.config import CalamariConfig, AlembicConfig
+from calamari_common.config import CalamariConfig
 
 # Import sqlalchemy objects so that create_all sees them
 from cthulhu.persistence.sync_objects import SyncObject  # noqa
@@ -222,6 +221,7 @@ def initialize(args):
 def _initialize_db(args, config):
     from alembic import command
     from sqlalchemy import create_engine
+    from calamari_common.config import AlembicConfig
 
     run_local_salt(sls=RELAX_SALT_PERMS_SLS, message='salt')
     run_local_salt(sls=POSTGRES_SLS, message='postgres')
@@ -270,6 +270,8 @@ def initialize(args):
     if not os.path.exists(config.get('calamari_web', 'secret_key_path')):
         chars = 'abcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*(-_=+)'
         open(config.get('calamari_web', 'secret_key_path'), 'w').write(get_random_string(50, chars))
+
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "calamari_web.settings")
 
     try:
         _initialize_db(args, config)
