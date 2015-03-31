@@ -1,0 +1,3 @@
+smartmontools:
+  pkg:
+    - installed
