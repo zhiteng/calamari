@@ -7,22 +7,16 @@ import psutil
 from itertools import chain
 import yaml
 from subprocess import Popen, PIPE
-from utils import wait_until_true, run_once
+from utils import scalable_wait_until_true, run_once
 import json
+import urllib2
 
-from minion_sim.sim import MinionSim
-from minion_sim.log import log as minion_sim_log
-from django.utils.unittest.case import SkipTest
+from nose.exc import SkipTest
 from tests.config import TestConfig
 
 config = TestConfig()
-logging.basicConfig()
-
-log = logging.getLogger(__name__)
-
-handler = logging.FileHandler("minion_sim.log")
-handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(name)s %(message)s"))
-minion_sim_log.addHandler(handler)
+log = logging.getLogger("ceph_ctl")
+log.setLevel(logging.DEBUG)
 
 
 class CephControl(object):
@@ -96,6 +90,8 @@ class EmbeddedCephControl(CephControl):
     def configure(self, server_count, cluster_count=1):
         osds_per_host = 4
 
+        from minion_sim.sim import MinionSim
+
         for i in range(0, cluster_count):
             domain = "cluster%d.com" % i
             config_dir = tempfile.mkdtemp()
@@ -165,10 +161,27 @@ class ExternalCephControl(CephControl):
 
         # TODO parse this out of the cluster.yaml
         self.cluster_name = 'ceph'
+        self.default_pools = set(['data', 'metadata', 'rbd'])
+
+        self.ceph_control = config.get('testing', 'ceph_control')
+
+        self.cluster_distro = None
+        if config.has_option('testing', 'cluster_distro'):
+            self.cluster_distro = config.get('testing', 'cluster_distro')
 
     def _run_command(self, target, command):
-        ssh_command = 'ssh ubuntu@{target} {command}'.format(target=target, command=command)
-        proc = Popen(ssh_command, shell=True, stdout=PIPE)
+        log.debug(target)
+        log.debug(command)
+        user_at_host = next(t for t in self.config['cluster'].iterkeys() if t.split('@')[1] == target)
+        if self.ceph_control == 'converged':
+            proc = Popen(command, stdout=PIPE, stderr=PIPE, shell=True)
+        elif self.ceph_control == 'external':
+            proc = Popen([
+                'ssh',
+                '-oStrictHostKeyChecking=no',
+                '-oUserKnownHostsFile=/dev/null',
+                user_at_host,
+                command], stdout=PIPE, stderr=PIPE)
         out, err = proc.communicate()
         if proc.returncode != 0:
             log.error("stdout: %s" % out)
@@ -182,52 +195,65 @@ class ExternalCephControl(CephControl):
         return out
 
     def configure(self, server_count, cluster_count=1):
+        log.debug('external configure')
+        if cluster_count != 1:
+            raise SkipTest('ExternalCephControl does not do multiple clusters')
 
-        # I hope you only wanted three, because I ain't buying
-        # any more servers...
-        if server_count > 3 or cluster_count != 1:
-            raise SkipTest('ExternalCephControl does not multiple clusters or clusters with more than three nodes')
+        if config.has_option('testing', 'bootstrap'):
+            bootstrap = config.getboolean('testing', 'bootstrap')
+        else:
+            bootstrap = True
 
-        self.reset_all_osds(self._run_command(self._get_admin_node(),
-                                              "ceph --cluster {cluster} osd dump -f json-pretty".format(
-                                                  cluster=self.cluster_name)))
+        if cluster_count != 1:
+            raise SkipTest('ExternalCephControl does not do multiple clusters')
 
-        # Ensure all OSDs are initially up: assertion per #7813
-        self._wait_for_state(lambda: self._run_command(self._get_admin_node(),
-                                                       "ceph --cluster {cluster} osd dump -f json-pretty".format(
-                                                           cluster=self.cluster_name)),
-                             self._check_osds_in_and_up)
-        # TODO what about tests that create OSDs we should remove them
+        if config.has_option('testing', 'bootstrap'):
+            bootstrap = config.getboolean('testing', 'bootstrap')
+        else:
+            bootstrap = True
 
-        self.reset_all_pools(self._run_command(self._get_admin_node(),
-                                               "ceph --cluster {cluster} osd lspools -f json-pretty".format(
-                                                   cluster=self.cluster_name)))
+        if bootstrap:
+            self._bootstrap(self.config['master_fqdn'])
+
+        self.restart_minions()
+
+        self.reset_crush_map()
+        self.reset_all_osds(self._list_osds())
+
+        self.reset_all_pools(self._list_pools())
+
+        self.wait_till_osds_up_and_in()
 
         # Ensure there are initially no pools but the default ones. assertion per #7813
-        self._wait_for_state(lambda: self._run_command(self._get_admin_node(),
-                                                       "ceph --cluster {cluster} osd lspools -f json-pretty".format(
-                                                           cluster=self.cluster_name)),
+        self._wait_for_state(self._list_pools,
                              self._check_default_pools_only)
 
         # wait till all PGs are active and clean assertion per #7813
-        # TODO stop scraping this, defer this because pg stat -f json-pretty is anything but
-        self._wait_for_state(lambda: self._run_command(self._get_admin_node(),
-                                                       "ceph --cluster {cluster} pg stat".format(
-                                                           cluster=self.cluster_name)),
+        self._wait_for_state(self._list_pgs,
                              self._check_pgs_active_and_clean)
 
-        self._bootstrap(self.config['master_fqdn'])
-        self.restart_minions()
-
-    def get_server_fqdns(self):
-        return [target.split('@')[1] for target in self.config['cluster'].iterkeys()]
+    def wait_till_osds_up_and_in(self):
+        # Ensure all OSDs are initially up: assertion per #7813
+        self._wait_for_state(self._list_osds,
+                             self._check_osds_in_and_up)
 
     def get_service_fqdns(self, fsid, service_type):
-        # I run OSDs and mons in the same places (on all three servers)
-        return self.get_server_fqdns()
+        fqdns = []
+        for target, roles in self.config['cluster'].iteritems():
+            if any([r.startswith(service_type) for r in roles['roles']]):
+                fqdns.append(target.split('@')[1])
+        return fqdns
+
+    def get_server_fqdns(self):
+        # make fsid real for multiple cluster; for now passing None
+        serverset = set(self.get_service_fqdns(None, 'mon') +
+                        self.get_service_fqdns(None, 'osd'))
+        return list(serverset)
 
     def shutdown(self):
-        pass
+        log.info('Resetting CRUSH map on shutdown')
+        temp_crushmap_filename = "/tmp/test_crush_map"
+        self._run_command(self._get_admin_node(), "sudo ceph --cluster {c} osd setcrushmap -i {crush_name}".format(c=self.cluster_name, crush_name=temp_crushmap_filename))
 
     def get_fqdns(self, fsid):
         # TODO when we support multiple cluster change this
@@ -240,80 +266,110 @@ class ExternalCephControl(CephControl):
                 continue
             self._run_command(target, "sudo service salt-minion {action}".format(action=action))
 
+    def reset_crush_map(self):
+        """
+        This depends on the map being good on first run and the admin_node being stable because it is the persistance of the tempfile that make this work
+        """
+        # TODO make this more robust
+        temp_crushmap_filename = "/tmp/test_crush_map"
+        log.info('Resetting CRUSH map')
+        # get map store it
+        self._run_command(self._get_admin_node(), "ls {crush_name} || sudo ceph --cluster {c} osd getcrushmap -o {crush_name}".format(c=self.cluster_name, crush_name=temp_crushmap_filename))
+
     def _wait_for_state(self, command, state):
         log.info('Waiting for {state} on cluster'.format(state=state))
-        wait_until_true(lambda: state(command()))
+        scalable_wait_until_true(lambda: state(command()))
 
-    def _check_default_pools_only(self, output):
-        pools = json.loads(output)
-        return {'data', 'metadata', 'rbd'} == set([x['poolname'] for x in pools])
+    def _list_pgs(self):
+        # TODO stop scraping this, defer this because pg stat -f json-pretty is anything but
+        return self._run_command(self._get_admin_node(),
+                                 "sudo ceph --cluster {cluster} pg stat".format(
+                                     cluster=self.cluster_name))
 
     def _check_pgs_active_and_clean(self, output):
-        _, total_stat, pg_stat, _ = output.replace(';', ':').split(':')
+        total_stat, pg_stat = output.replace(';', ':').split(':')[1:3]
         return 'active+clean' == pg_stat.split()[1] and total_stat.split()[0] == pg_stat.split()[0]
 
-    def _get_osds_down_or_out(self, output):
-        osd_stat = json.loads(output)
-        osd_down = [osd['osd'] for osd in osd_stat['osds'] if not osd['up']]
-        osd_out = [osd['osd'] for osd in osd_stat['osds'] if not osd['in']]
+    def _list_osds(self):
+        return json.loads(self._run_command(self._get_admin_node(),
+                                            "sudo ceph --cluster {cluster} osd dump -f json-pretty".format(
+                                                cluster=self.cluster_name)))
 
-        return {'down': osd_down, 'out': osd_out}
+    def _check_osds_in_and_up(self, osds):
+        osd_down = [osd['osd'] for osd in osds['osds'] if not osd['up']]
+        osd_out = [osd['osd'] for osd in osds['osds'] if not osd['in']]
+        return not osd_down + osd_out
 
-    def _check_osds_in_and_up(self, output):
-        osd_state = self._get_osds_down_or_out(output)
-        return not osd_state['down'] + osd_state['out']
-
-    def reset_all_osds(self, output):
-        target = self._get_admin_node()
-        osd_stat = json.loads(output)
-        # TODO this iteration should happen on the remote side
-        for osd in osd_stat['osds']:
-            self._run_command(target, 'ceph osd reweight {osd_id} 1.0'.format(osd_id=osd['osd']))
-            self._run_command(target, 'ceph osd in {osd_id}'.format(osd_id=osd['osd']))
+    def reset_all_osds(self, osd_stat):
+        # this structure doesn't contain weight in dumpling = default 0
+        for osd in [osd['osd'] for osd in osd_stat['osds'] if int(float(osd.get('weight', 0))) != 1]:
+            self._run_command(self._get_admin_node(), 'sudo ceph osd reweight {osd_id} 1.0'.format(osd_id=osd))
 
         for flag in ['pause']:
-            self._run_command(target, "ceph --cluster ceph osd unset {flag}".format(flag=flag))
+            self._run_command(self._get_admin_node(), "sudo ceph --cluster ceph osd unset {flag}".format(flag=flag))
 
-    def reset_all_pools(self, output):
-        target = self._get_admin_node()
-        default_pools = {'data', 'metadata', 'rbd'}
-        for pool in default_pools:
-            self._run_command(target, 'ceph osd pool create {pool} 64'.format(pool=pool))
+    def _list_pools(self):
+        pools = json.loads(self._run_command(self._get_admin_node(),
+                                             "sudo ceph --cluster {cluster} osd lspools -f json-pretty".format(
+                                                 cluster=self.cluster_name)))
+        return set([x['poolname'] for x in pools])
 
-        pools = json.loads(output)
-        for pool in pools:
-            if pool['poolname'] in default_pools:
-                continue
-            self._run_command(target, 'ceph osd pool delete {pool} {pool} --yes-i-really-really-mean-it'.format(
-                pool=pool['poolname']))
+    def _check_default_pools_only(self, pools):
+        return self.default_pools == pools
+
+    def reset_all_pools(self, existing_pools):
+        for pool in self.default_pools - existing_pools:
+            self._run_command(self._get_admin_node(), 'sudo ceph osd pool create {pool} 64'.format(pool=pool))
+
+        for pool in existing_pools - self.default_pools:
+            self._run_command(self._get_admin_node(), 'sudo ceph osd pool delete {pool} {pool} --yes-i-really-really-mean-it'.format(
+                pool=pool))
 
     def restart_minions(self):
         for target in self.get_fqdns(None):
             self._run_command(target, 'sudo service salt-minion restart')
 
     @run_once
-    def _bootstrap(self, master_fqdn):
+    def _bootstrap(self, master_fqdn, distro='ubuntu'):
         for target in self.get_fqdns(None):
             log.info('Bootstrapping salt-minion on {target}'.format(target=target))
 
-            # TODO abstract out the port number
-            output = self._run_command(target, '''"wget -O - http://{fqdn}:8000/bootstrap |\
-             sudo python ;\
-             sudo sed -i 's/^[#]*open_mode:.*$/open_mode: True/;s/^[#]*log_level:.*$/log_level: debug/' /etc/salt/minion && \
-             sudo killall salt-minion; sudo service salt-minion restart"'''.format(fqdn=master_fqdn))
+            url = 'http://{fqdn}/api/v2/info'.format(fqdn=master_fqdn)
+            info = json.loads(urllib2.urlopen(url).read())
+
+            try:
+                # TODO subshell here, _run_command only halts the tests if the salt-minion restart fails
+                # Also that would mean that we'd need to make apt-get update run clean
+                # it currently fails due to lack of i386 packages in precise
+                bootstrap_cmd = '''{bootstrap};
+                    sudo sed -i 's/^[#]*open_mode:.*$/open_mode: True/;s/^[#]*log_level:.*$/log_level: debug/' /etc/salt/minion;
+                    sudo service salt-minion stop
+                    sudo killall salt-minion;
+                    sudo service salt-minion start'''.format(bootstrap=info['bootstrap_{distro}'.format(distro=self.cluster_distro)])
+            except KeyError:
+                raise NotImplementedError('Cannot bootstrap a {distro} cluster'.format(distro=self.cluster_distro))
+
+            output = self._run_command(target, bootstrap_cmd)
             log.info(output)
 
     def _get_admin_node(self):
-        for target, roles in self.config['cluster'].iteritems():
-            if 'client.0' in roles['roles']:
-                return target.split('@')[1]
+        # return the first monitor we find
+        return self.get_service_fqdns(None, 'mon')[0]
 
     def mark_osd_in(self, fsid, osd_id, osd_in=True):
         command = 'in' if osd_in else 'out'
-        output = self._run_command(self._get_admin_node(),
-                                   "ceph --cluster {cluster} osd {command} {id}".format(cluster=self.cluster_name,
-                                                                                        command=command,
-                                                                                        id=int(osd_id)))
+        output = self._run_command(
+            self._get_admin_node(),
+            "sudo ceph --cluster {cluster} osd {command} {id}".format(
+                cluster=self.cluster_name, command=command, id=int(osd_id)
+            )
+        )
+        log.info(output)
+
+    def restart_osd(self, fsid, fqdn, osd_id):
+        output = self._run_command(
+            fqdn,
+            "sudo service ceph restart osd.{id}".format(id=osd_id))
         log.info(output)
 
 
