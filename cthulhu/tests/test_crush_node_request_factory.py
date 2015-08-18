@@ -43,7 +43,6 @@ class TestCrushNodeFactory(TestCase):
 
         self.factory = CrushNodeRequestFactory(fake_cluster_monitor)
 
-    @patch('cthulhu.manager.user_request.LocalClient', fake_salt)
     def test_create_new_root(self):
         attribs = {'name': 'fake',
                    'bucket_type': 'root',
@@ -67,7 +66,6 @@ class TestCrushNodeFactory(TestCase):
              ('osd crush move', {'args': ['root=fake'], 'name': 'rack2'}),
              ]
 
-    @patch('cthulhu.manager.user_request.LocalClient', fake_salt)
     def test_create_new_host(self):
         self.factory._get_hostname_where_osd_runs = lambda x: 'figment001'
         attribs = {'name': 'fake',
@@ -104,7 +102,6 @@ class TestCrushNodeFactory(TestCase):
                                    'val': json.dumps({'parent_type': 'host', 'parent_name': 'fake', 'hostname': 'figment001'})}),
                ('osd crush reweight', {'name': 'osd.3', 'weight': 33})]])
 
-    @patch('cthulhu.manager.user_request.LocalClient', fake_salt)
     def test_update_rename(self):
         attribs = {'name': 'renamed',
                    'bucket_type': 'root',
@@ -129,7 +126,6 @@ class TestCrushNodeFactory(TestCase):
              ('osd crush remove', {'name': 'root'}),
              ]
 
-    @patch('cthulhu.manager.user_request.LocalClient', fake_salt)
     def test_update_add_items(self):
         attribs = {'name': 'root',
                    'bucket_type': 'root',
@@ -157,7 +153,6 @@ class TestCrushNodeFactory(TestCase):
              ('osd crush move', {'args': ['root=root'], 'name': 'rack3'}),
              ]
 
-    @patch('cthulhu.manager.user_request.LocalClient', fake_salt)
     def test_update_remove_items(self):
         attribs = {'name': 'root',
                    'bucket_type': 'root',
@@ -176,7 +171,6 @@ class TestCrushNodeFactory(TestCase):
              ('osd crush move', {'args': ['root=root'], 'name': 'rack1'}),
              ]
 
-    @patch('cthulhu.manager.user_request.LocalClient', fake_salt)
     def test_update_remove_osds(self):
         attribs = {'name': 'root',
                    'bucket_type': 'root',
@@ -195,7 +189,6 @@ class TestCrushNodeFactory(TestCase):
              ('osd crush move', {'args': ['root=root'], 'name': 'rack1'}),
              ]
 
-    @patch('cthulhu.manager.user_request.LocalClient', fake_salt)
     def test_delete_bucket(self):
         delete_node = self.factory.delete(-2)
         self.assertIsInstance(delete_node, RadosRequest, 'renaming crush node')
@@ -203,7 +196,6 @@ class TestCrushNodeFactory(TestCase):
         delete_node.submit(54321)
         assert self.fake_salt.run_job.call_args[0][2][2] == [('osd crush remove', {'name': 'rack1'})]
 
-    @patch('cthulhu.manager.user_request.LocalClient', fake_salt)
     def test_update_rename_relink_to_parent(self):
         self.factory._get_hostname_where_osd_runs = lambda x: 'figment001'
         attribs = {'name': 'renamed',

@@ -43,6 +43,7 @@ config-tests-no-bootstrap:
 
 make-check:
     cmd.run:
+        - user: vagrant
         - name: source env/bin/activate; make check
         - cwd: /home/vagrant/calamari
         - require:
@@ -50,11 +51,13 @@ make-check:
 
 supervisord:
     cmd.run:
+        - user: vagrant
         - name: source env/bin/activate; supervisord -c dev/supervisord.conf
         - cwd: /home/vagrant/calamari
 
 nosetests:
     cmd.run:
+        - user: vagrant
         - name: source env/bin/activate; nosetests tests
         - cwd: /home/vagrant/calamari
         - require:
