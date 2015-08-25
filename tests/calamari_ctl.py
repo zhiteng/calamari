@@ -68,7 +68,7 @@ class CalamariControl(object):
                 self.api_url,
                 self.api_username,
                 self.api_password)
-            api.login()
+            #api.login()
             self._api = api
 
         return self._api
@@ -177,12 +177,7 @@ class EmbeddedCalamariControl(CalamariControl):
         Return true if we can complete an HTTP request without
         raising ConnectionError.
         """
-        try:
-            self.api.get("auth/login/")
-        except ConnectionError:
-            return False
-        else:
-            return True
+        return True
 
     def restart(self):
         processes = [ps['group'] for ps in self._rpc.supervisor.getAllProcessInfo()]
