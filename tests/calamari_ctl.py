@@ -68,7 +68,7 @@ class CalamariControl(object):
                 self.api_url,
                 self.api_username,
                 self.api_password)
-            #api.login()
+            api.login()
             self._api = api
 
         return self._api

@@ -4,7 +4,6 @@
 plugin_path = {{calamari_root}}/cthulhu/tests/plugins
 salt_config_path = {{calamari_root}}/dev/etc/salt/master
 alembic_config_path = {{calamari_root}}/dev/alembic.ini
-db_path = postgresql://calamari:27HbZwr*g@localhost/calamari
 log_path = {{calamari_root}}/dev/cthulhu.log
 log_level = DEBUG
 rpc_url = tcp://127.0.0.1:5050
@@ -20,7 +19,7 @@ cluster_contact_threshold = 60
 
 log_path = {{calamari_root}}/dev/calamari.log
 log_level = DEBUG
-db_engine = django.db.backends.postgresql_psycopg2
+db_engine = django.db.backends.sqlite3
 db_name = calamari
 db_user = calamari
 db_password = 27HbZwr*g

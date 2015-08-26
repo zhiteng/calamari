@@ -62,20 +62,6 @@ def _initialize_db(args, config):
     from calamari_common.config import AlembicConfig
     from calamari_common.db.base import Base
 
-    # Configure postgres database
-    if os.path.exists(POSTGRES_SLS):
-        p = subprocess.Popen(["salt-call", "--local", "state.template",
-                              POSTGRES_SLS],
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, err = p.communicate()
-        log.debug("Postgres salt stdout: %s" % out)
-        log.debug("Postgres salt stderr: %s" % err)
-        if p.returncode != 0:
-            raise RuntimeError("salt-call for postgres failed with rc={0}".format(p.returncode))
-    else:
-        # This is the path you take if you're running in a development environment
-        log.debug("Skipping postgres configuration, SLS not found")
-
     # Cthulhu's database
     db_path = config.get('cthulhu', 'db_path')
     engine = create_engine(db_path)
@@ -140,8 +126,8 @@ def initialize(args):
 
     try:
         _initialize_db(args, config)
-    except ImportError:
-        log.warning("Skipping database configuration")
+    except ImportError, e:
+        log.warning("Skipping database configuration: %s" % str(e))
 
     # Django's static files
     with quiet():
