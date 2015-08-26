@@ -39,8 +39,11 @@ calamari_common_mod:
     - require:
       - sls: virtualenv
 
-teuthology_bootstrap:
+calamari_lite_mod:
   cmd.run:
     - user: vagrant
-    - name: "./bootstrap"
-    - cwd: /home/vagrant/teuthology
+    - name: "source ../env/bin/activate && python setup.py develop"
+    - cwd: /home/vagrant/calamari/calamari-lite
+    - require:
+      - sls: virtualenv
+
