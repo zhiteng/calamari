@@ -92,6 +92,7 @@ class RpcInterface(object):
         return result
 
     def delete_cluster(self, fs_id):
+        import pdb; pdb.set_trace()
         # Clear out records of services belonging to the cluster
         self._manager.servers.delete_cluster(fs_id)
         # Clear out records of the cluster itself

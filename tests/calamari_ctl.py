@@ -81,6 +81,7 @@ class CalamariControl(object):
             r.raise_for_status()
 
     def authorize_keys(self, minion_ids):
+        return
         def _fqdns_present():
             found_ids = [m['id'] for m in self.api.get("key").json()]
             all_present = len(set(minion_ids) & set(found_ids)) == len(minion_ids)
@@ -121,6 +122,7 @@ class CalamariControl(object):
         for each test.
         """
 
+        return
         if no_clusters:
             # Initially there should be no clusters
             response = self.api.get("cluster")

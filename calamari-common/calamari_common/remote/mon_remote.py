@@ -1,7 +1,7 @@
 from glob import glob
 import hashlib
-import subprocess
 import re
+import subprocess
 import struct
 import traceback
 import uuid
@@ -62,8 +62,13 @@ def md5(raw):
 
 
 def get_ceph_version():
-    # TODO: a salt-less query for install ceph package version
-    return None
+    result = ceph_command(None, ['--version'])
+    try:
+        version = result['out'].split(' ')[2]
+    except (KeyError, AttributeError):
+        version = None
+
+    return version
 
 
 def rados_connect(cluster_name):
@@ -411,10 +416,7 @@ def ceph_command(cluster_name, command_args):
     :param command_args: Command line, excluding the leading 'ceph' part.
     """
 
-    if SRC_DIR:
-        ceph = [os.path.join(SRC_DIR, "ceph"), "-c", os.path.join(SRC_DIR, "ceph.conf")]
-    else:
-        ceph = ['ceph']
+    ceph = ['ceph']
 
     if cluster_name:
         args = ceph + ["--cluster", cluster_name] + command_args
@@ -719,7 +721,13 @@ def run_job(cmd, args):
             args['cluster_name'],
             args['sync_type'],
             args['since'])
+    elif cmd == "ceph.rados_commands":
+        return rados_commands(
+            args['fsid'],
+            args['cluster_name'],
+            args['commands'],)
     else:
+        import pdb; pdb.set_trace()
         raise NotImplemented(cmd)
 
 
@@ -761,6 +769,7 @@ class MsgGenerator(gevent.Greenlet):
         # process and RPC to it.
         from gevent import monkey
         monkey.patch_all()
+        monkey.patch_subprocess()
 
     def register(self, instance):
         if instance not in self._instances:
@@ -782,7 +791,7 @@ class MsgGenerator(gevent.Greenlet):
             raise Unavailable()
 
         jid = uuid.uuid4().__str__()
-        self._jobs[jid] = gevent.spawn(lambda: run_job_thread(jid, cmd, args))
+        self._jobs[jid] = gevent.spawn(lambda: run_job_thread(self, jid, cmd, args))
         return jid
 
     def _run(self):
@@ -828,6 +837,7 @@ A ``Remote`` implementation that runs directly on a Ceph mon or
         self.hostname = socket.gethostname()
 
         self._events = Queue()
+        self.register()
 
 
     def put(self, msg_event):

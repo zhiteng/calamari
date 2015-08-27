@@ -107,7 +107,8 @@ def main():
 
     gevent.signal(signal.SIGTERM, shutdown)
     gevent.signal(signal.SIGINT, shutdown)
+    print 'WTF'
 
     while not complete.is_set():
-        cthulhu.eventer.on_tick()
+        # cthulhu.eventer.on_tick()
         complete.wait(timeout=5)
