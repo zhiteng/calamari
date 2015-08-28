@@ -1,6 +1,6 @@
 VERSION ?= $(shell ./get-versions.sh VERSION)
 REVISION ?= $(shell ./get-versions.sh REVISION)
-DIST ?= unstable
+DIST ?= trusty
 BPTAG ?= ""
 DEBEMAIL ?= dan.mick@inktank.com
 FLAVOR ?= $(shell ./get-flavor.sh)
