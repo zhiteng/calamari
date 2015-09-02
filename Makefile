@@ -4,7 +4,7 @@ DIST ?= unstable
 PACKAGE_VERSION = 1
 CODENAME ?= $(shell lsb_release -sc)
 BPTAG ?= ""# backport tag starts with ~ and applies to debian only
-DEBEMAIL ?= dan.mick@inktank.com
+DEBEMAIL ?= dmick@redhat.com
 FLAVOR ?= $(shell ./get-flavor.sh)
 
 # debian upstream tarballs: {name}_{version}.orig.tar.gz
